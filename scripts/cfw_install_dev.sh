@@ -405,6 +405,7 @@ VPHONED_SRCS=(
     "$VPHONED_SRC/vphoned.m"
     "$VPHONED_SRC/vphoned_protocol.m"
     "$VPHONED_SRC/vphoned_hid.m"
+    "$VPHONED_SRC/vphoned_app.m"
     "$VPHONED_SRC/vphoned_devmode.m"
     "$VPHONED_SRC/vphoned_location.m"
     "$VPHONED_SRC/vphoned_files.m"

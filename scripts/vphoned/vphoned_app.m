@@ -279,22 +279,7 @@ NSDictionary *vp_handle_app_install(NSDictionary *msg, id reqId) {
     NSString *extractDir = [[appPath stringByDeletingLastPathComponent]
                             stringByDeletingLastPathComponent];
 
-    // Stage 2: Optional re-sign
-    BOOL resigned = NO;
-    NSDictionary *resignErr = nil;
-    BOOL resignResult = vp_app_resign(appPath, &resignErr);
-
-    if (!resignResult && resignErr) {
-        // ldid exists but signing failed
-        NSMutableDictionary *r = vp_make_response(@"err", reqId);
-        r[@"msg"] = resignErr[@"msg"] ?: @"re-signing failed";
-        r[@"stage"] = @"resign";
-        vp_app_cleanup_ipa(extractDir, ipaPath);
-        return r;
-    }
-    resigned = resignResult; // YES if ldid available and succeeded, NO if ldid not available
-
-    // Stage 3: Install via LSApplicationWorkspace
+    // Stage 2: Install via LSApplicationWorkspace
     NSLog(@"vphoned: app_install: installing %@", appPath);
     NSDictionary *installErr = nil;
     NSString *bundleId = vp_app_install(appPath, &installErr);
