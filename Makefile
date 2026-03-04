@@ -5,7 +5,7 @@
 # ─── Configuration (override with make VAR=value) ─────────────────
 VM_DIR      ?= vm
 CPU         ?= 8
-MEMORY      ?= 8192
+MEMORY      ?= 4096
 DISK_SIZE   ?= 64
 CFW_INPUT   ?= cfw_input
 
@@ -172,7 +172,8 @@ boot: bundle vphoned
 		--machine-id ./machineIdentifier.bin \
 		--cpu $(CPU) --memory $(MEMORY) \
 		--sep-rom ./AVPSEPBooter.vresearch1.bin \
-		--sep-storage ./SEPStorage
+		--sep-storage ./SEPStorage \
+		$(BOOT_ARGS)
 
 boot_dfu: build
 	cd $(VM_DIR) && "$(CURDIR)/$(BINARY)" \

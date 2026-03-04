@@ -14,8 +14,8 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VENV_DIR="${PROJECT_ROOT}/.venv"
 REQUIREMENTS="${PROJECT_ROOT}/requirements.txt"
 
-# Use system Python3
-PYTHON="$(command -v python3)"
+# Use Homebrew Python 3.13
+PYTHON="$(command -v python3.13)"
 if [[ -z "${PYTHON}" ]]; then
     echo "Error: python3 not found in PATH"
     exit 1
@@ -30,10 +30,10 @@ echo ""
 # Create venv from system Python
 "${PYTHON}" -m venv "${VENV_DIR}"
 
-# Activate and install pip packages
+# Activate and install pip packages (use default PyPI, not mirror)
 source "${VENV_DIR}/bin/activate"
-pip install --upgrade pip >/dev/null
-pip install -r "${REQUIREMENTS}"
+pip install --upgrade pip > /dev/null
+pip install -i https://pypi.org/simple -r "${REQUIREMENTS}"
 
 # --- Build keystone native library ---
 # The keystone-engine pip package is Python bindings only.
@@ -52,7 +52,7 @@ if [[ -z "${KEYSTONE_STATIC}" ]]; then
     exit 1
 fi
 
-PYVER="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+PYVER="$(python3.13 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
 KS_PKG_DIR="${VENV_DIR}/lib/python${PYVER}/site-packages/keystone"
 KS_DYLIB="${KS_PKG_DIR}/libkeystone.dylib"
 
@@ -69,7 +69,7 @@ echo "  dylib built OK"
 # --- Verify ---
 echo ""
 echo "=== Verifying imports ==="
-python3 -c "
+python3.13 -c "
 from capstone import Cs, CS_ARCH_ARM64, CS_MODE_LITTLE_ENDIAN
 from keystone import Ks, KS_ARCH_ARM64, KS_MODE_LITTLE_ENDIAN
 from pyimg4 import IM4P

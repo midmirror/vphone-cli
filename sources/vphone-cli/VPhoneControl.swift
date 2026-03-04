@@ -74,12 +74,15 @@ class VPhoneControl {
         case notConnected
         case protocolError(String)
         case guestError(String)
+        /// Guest error with stage info (from app_install responses).
+        case guestErrorWithStage(message: String, stage: String?)
 
         var description: String {
             switch self {
             case .notConnected: "not connected to vphoned"
             case let .protocolError(msg): "protocol error: \(msg)"
             case let .guestError(msg): msg
+            case let .guestErrorWithStage(msg, _): msg
             }
         }
     }
@@ -380,6 +383,46 @@ class VPhoneControl {
         _ = try await sendRequest(["t": "file_rename", "from": from, "to": to])
     }
 
+    // MARK: - App Install
+
+    struct InstallResult {
+        let bundleId: String?
+        let errorMessage: String?
+        let failedStage: String?
+    }
+
+    func installApp(localPath: String) async throws -> InstallResult {
+        // Read local IPA file
+        let url = URL(fileURLWithPath: localPath)
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            throw ControlError.protocolError("failed to read IPA: \(error.localizedDescription)")
+        }
+
+        // Upload to guest /tmp/install_<UUID>.ipa
+        let remotePath = "/tmp/install_\(UUID().uuidString).ipa"
+        print("[control] uploading IPA (\(data.count) bytes) to \(remotePath)...")
+        try await uploadFile(path: remotePath, data: data)
+
+        // Send app_install command
+        print("[control] installing app from \(remotePath)...")
+        do {
+            let (resp, _) = try await sendRequest(["t": "app_install", "path": remotePath])
+            let bundleId = resp["bundle_id"] as? String
+            return InstallResult(bundleId: bundleId, errorMessage: nil, failedStage: nil)
+        } catch let error as ControlError {
+            if case let .guestErrorWithStage(msg, stage) = error {
+                return InstallResult(bundleId: nil, errorMessage: msg, failedStage: stage)
+            }
+            if case let .guestError(msg) = error {
+                return InstallResult(bundleId: nil, errorMessage: msg, failedStage: nil)
+            }
+            throw error
+        }
+    }
+
     // MARK: - Location
 
     func sendLocation(
@@ -456,7 +499,12 @@ class VPhoneControl {
                 if let reqId, let pending = removePending(id: reqId) {
                     if type == "err" {
                         let detail = msg["msg"] as? String ?? "unknown error"
-                        pending.handler(.failure(ControlError.guestError(detail)))
+                        let stage = msg["stage"] as? String
+                        if stage != nil {
+                            pending.handler(.failure(ControlError.guestErrorWithStage(message: detail, stage: stage)))
+                        } else {
+                            pending.handler(.failure(ControlError.guestError(detail)))
+                        }
                         continue
                     }
 

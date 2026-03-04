@@ -1,0 +1,114 @@
+## 代码库模式
+- vphoned 模块命名约定：文件 `vphoned_模块名.{h,m}`，函数 `vp_模块名_动词()`，命令处理 `vp_handle_模块_command()`
+- Mach-O 检测使用 magic number（4 bytes header），支持 64-bit/32-bit/FAT 格式
+- .app bundle 结构：主二进制通过 `Info.plist` 的 `CFBundleExecutable` 定位，框架二进制在 `Frameworks/*.framework/` 下
+- iOS 私有 API 调用模式：`dlopen` 加载框架 → `NSClassFromString` 获取类 → `NSSelectorFromString` + `NSInvocation` 调用方法（避免编译期依赖）
+- 私有框架加载双路径回退：先 `/System/Library/PrivateFrameworks/` 再 `/System/Library/Frameworks/`
+- 头文件模板：`#pragma once` + `#import <Foundation/Foundation.h>` + 函数声明
+- 响应构建：统一使用 `vp_make_response(type, reqId)` 返回 `NSMutableDictionary *`，错误时 type 传 `@"err"` 并追加 `r[@"msg"]`
+- caps 注册模式：始终可用的写入初始数组，运行时探测的用 `if (vp_xxx_available())` 条件添加
+- 命令分派：简单命令在 `handle_command()` 中用 `isEqualToString:` 匹配；需要 socket fd 的命令（如 file_*）在 `handle_client()` 消息循环中用 `hasPrefix:` 拦截
+- vphoned 是 guest ObjC 代码，无法在 macOS 上编译验证（需 iOS SDK），语法检查依赖代码审查
+- 外部命令执行使用 `posix_spawn` + `waitpid` 模式
+- 所有 .m 文件只 import 自己的 .h 和 vphoned_protocol.h，不交叉 import 其他模块
+- 宿主端高层 API 模式：`VPhoneControl` 中封装 struct（如 `InstallResult`）+ async throws 方法，内部组合 `uploadFile` + `sendRequest` 等底层调用
+- `ControlError` 扩展模式：需要保留额外字段时新增 case（如 `guestErrorWithStage`），保持 `description` 返回用户可读字符串
+- GUI 菜单扩展模式：`VPhoneMenuConnect` 中新增菜单项用 `makeItem` + `@objc` 方法；异步操作放在 `Task {}` 中，结果用 `showAlert` 展示
+- 菜单项运行时禁用模式：通过 `NSApp.mainMenu?.item(withTitle:)?.submenu?.item(withTitle:)` 查找菜单项，设置 `isEnabled` 控制
+- `onConnect` 回调有 GUI 和 headless 两处，修改连接后行为时两处都要同步更新
+- CLI 参数添加模式：`VPhoneCLI.swift` 中用 `@Option`/`@Flag` 声明，`VPhoneAppDelegate` 通过 `cli.xxx` 访问
+
+## 2026-03-03 - US-001
+- 实现了 Guest 端 IPA 解压模块
+- 新增文件：`scripts/vphoned/vphoned_app.h`、`scripts/vphoned/vphoned_app.m`
+- 功能：`vp_app_extract_ipa()` 解压 IPA 到 `/tmp/<UUID>/`，优先用 `/usr/bin/unzip`，回退到 `/usr/bin/ditto`
+- 辅助：`vp_app_cleanup()` 清理临时目录，`run_command()` 封装 posix_spawn 调用
+- **未来迭代的经验总结：**
+  - `run_command()` 静态函数已在 vphoned_app.m 中实现，后续 US-002 (ldid 重签) 可直接复用
+  - `find_app_bundle()` 查找 `Payload/*.app`，后续 US-003 安装时可用其返回路径
+  - 解压回退策略：unzip → ditto，两者都不可用时返回明确错误信息
+  - `vp_app_cleanup()` 接受 extractDir 参数（从 appPath 向上一级或两级取得），US-003/004 需注意传入正确的目录
+---
+
+## 2026-03-03 - US-002
+- 实现了 Guest 端可选 ldid 重签模块
+- 修改文件：`scripts/vphoned/vphoned_app.h`、`scripts/vphoned/vphoned_app.m`
+- 功能：`vp_app_resign()` 检测 ldid 可用性，收集 .app 内所有 Mach-O 二进制并调用 `ldid -S` 重签
+- 辅助：`is_macho()` 通过 magic number 检测 Mach-O 文件，`collect_macho_binaries()` 遍历主二进制 + Frameworks
+- **未来迭代的经验总结：**
+  - `vp_app_resign()` 返回值语义：`YES` = ldid 可用且重签成功，`NO` = ldid 不可用（非错误）或重签失败（有 outError）
+  - US-004 调用时需区分：返回 NO 且 outError == nil → ldid 不可用（resigned=false），返回 NO 且 outError != nil → 重签失败（stage=resign）
+  - Mach-O magic 检测覆盖：MH_MAGIC_64/32 + big/little endian + FAT binary
+  - framework 二进制查找：先读 Info.plist 的 CFBundleExecutable，回退到去掉 .framework 后缀的名称
+---
+
+## 2026-03-03 - US-003
+- 实现了 Guest 端 LSApplicationWorkspace 安装调用
+- 修改文件：`scripts/vphoned/vphoned_app.h`、`scripts/vphoned/vphoned_app.m`
+- 功能：`vp_app_install()` 通过 dlopen + NSInvocation 调用 LSApplicationWorkspace 私有 API 安装 .app 包
+- 辅助：`load_ls_workspace()` 双路径加载 CoreServices 框架，`rebuild_icon_cache()` 刷新 SpringBoard 图标缓存，`vp_app_cleanup_ipa()` 清理临时目录和 IPA 文件
+- **未来迭代的经验总结：**
+  - `vp_app_install()` 返回 bundleId（成功）或 nil（失败），US-004 用此构建响应中的 `bundle_id` 字段
+  - 使用 `NSInvocation` 而非 `performSelector:` 调用多参数方法（含 NSError** 参数），这是 vphoned 中调用私有 API 的标准模式
+  - `rebuild_icon_cache()` 有双重回退：`_LSPrivateRebuildApplicationDatabasesForSystemApps:internal:user:` → `/usr/bin/uicache -a`
+  - `vp_app_cleanup_ipa()` 同时删除解压目录和源 IPA 文件，US-004 在安装完成后（无论成功失败）都应调用
+  - extractDir 从 appPath 推导：`[[appPath stringByDeletingLastPathComponent] stringByDeletingLastPathComponent]`（即 `/tmp/<UUID>/Payload/X.app` → `/tmp/<UUID>/`）
+---
+
+## 2026-03-03 - US-004
+- 实现了 Guest 端 app_install 命令分发与协议集成
+- 修改文件：`scripts/vphoned/vphoned.m`、`scripts/vphoned/vphoned_app.h`、`scripts/vphoned/vphoned_app.m`
+- 功能：`vp_handle_app_install()` 串联解压 → 可选重签 → 安装三个阶段，统一响应格式
+- 集成：在 `handle_command()` 中添加 `app_install` 分支，在 caps 数组中注册 `@"app_install"` 能力
+- **未来迭代的经验总结：**
+  - `app_install` 是简单命令（不需要 socket fd），直接在 `handle_command()` 中处理（不像 `file_*` 需要在 `handle_client()` 中拦截）
+  - caps 中 `app_install` 始终注册（不像 location 需运行时探测），因为底层 API 在安装时才 dlopen 加载，失败时会返回明确错误
+  - US-005 宿主端需要：先 `uploadFile` 上传 IPA 到 `/tmp/install_<UUID>.ipa`，再 `sendRequest` 发送 `{"t": "app_install", "path": "/tmp/install_<UUID>.ipa"}`
+  - 成功响应含 `bundle_id` + `resigned`，失败响应含 `msg` + `stage`（unzip/resign/install）
+  - 每个阶段失败都会调用 `vp_app_cleanup_ipa()` 清理临时文件，确保无残留
+---
+
+## 2026-03-03 - US-005
+- 实现了宿主端 VPhoneControl.installApp 方法
+- 修改文件：`sources/vphone-cli/VPhoneControl.swift`
+- 新增 `InstallResult` 结构体（bundleId, resigned, errorMessage, failedStage）
+- 新增 `installApp(localPath:)` async throws 方法：读取本地 IPA → uploadFile 上传 → sendRequest app_install → 解析响应
+- 新增 `ControlError.guestErrorWithStage` case，保留 guest 响应中的 stage 字段
+- 修改 read loop 中 err 处理：含 stage 字段时使用 guestErrorWithStage，否则保持 guestError 不变
+- **未来迭代的经验总结：**
+  - `installApp` 使用 `InstallResult` 返回而非抛异常（即使安装失败也返回 result），调用方通过 `errorMessage != nil` 判断失败
+  - `ControlError.guestErrorWithStage` 仅当 guest 响应含 `stage` 字段时使用，保持对现有 error 处理的向后兼容
+  - `VPhoneFileBrowserView.swift` 有已知的 Sendable 编译错误（NSSecureCoding），这是基线问题不是我们引入的
+  - US-006 GUI 调用 `installApp` 后：成功时检查 `result.bundleId != nil`，失败时使用 `result.errorMessage` + `result.failedStage`
+  - US-007 CLI 调用同理，通过 print 输出结果
+---
+
+## 2026-03-03 - US-006
+- 实现了 GUI 菜单 Install IPA 入口
+- 修改文件：`sources/vphone-cli/VPhoneMenuConnect.swift`
+- 在 Connect 菜单的 File Browser 后添加 "Install IPA..." 菜单项（通过 vsock guest daemon 安装）
+- 点击后弹出 NSOpenPanel（仅 .ipa），选择后调用 `control.installApp(localPath:)`
+- 成功显示 bundle ID，失败显示 stage + error message
+- 安装过程中菜单项禁用防止重复触发
+- **未来迭代的经验总结：**
+  - Connect 菜单中的 "Install IPA..." 使用 guest daemon（vsock），而 Install 菜单中的 "Install Package" 使用 ideviceinstaller（USB）——两种不同安装通道
+  - 菜单项查找模式：`NSApp.mainMenu?.item(withTitle:)?.submenu?.item(withTitle:)` 用于运行时控制菜单项状态
+  - `NSOpenPanel.allowedContentTypes` 使用 `UTType(filenameExtension:)` 初始化，需 `import UniformTypeIdentifiers`
+  - `installApp` 返回 `InstallResult` 而非抛异常，通过 `errorMessage != nil` 判断失败（与 US-005 进度笔记一致）
+  - US-007 CLI 参数中需注意：`VPhoneAppDelegate` 的 `control.onConnect` 回调中检查 `caps` 包含 `app_install` 后再调用
+---
+
+## 2026-03-03 - US-007
+- 实现了 CLI --install-ipa 参数支持
+- 修改文件：`sources/vphone-cli/VPhoneCLI.swift`、`sources/vphone-cli/VPhoneAppDelegate.swift`
+- 新增 `@Option(name: .long) var installIpa: String?` CLI 参数
+- 在 `startVirtualMachine()` 开头添加 IPA 文件存在性检查（不存在则打印错误并 terminate）
+- 在 GUI 和 headless 两个 `onConnect` 回调中添加自动安装逻辑
+- 安装结果通过 print() 输出到终端，安装完成后 VM 继续正常运行
+- **未来迭代的经验总结：**
+  - `onConnect` 回调有两处：GUI 模式和 headless 模式，修改连接回调逻辑时两处都要更新
+  - CLI 参数在 closure 中捕获时需用 `let installIpaPath = cli.installIpa` 提前绑定（因为 `cli` 是 struct）
+  - `onConnect` 回调是非 `@MainActor` 的，内部异步操作需用 `Task { @MainActor in }` 包裹
+  - 文件存在性检查放在 `startVirtualMachine()` 中（与 ROM 检查同级），用 `NSApp.terminate` + `return` 退出
+  - 所有 7 个用户故事已完成，IPA 安装功能端到端可用：guest daemon 解压/重签/安装 + 宿主端上传/控制 + GUI菜单/CLI参数
+---

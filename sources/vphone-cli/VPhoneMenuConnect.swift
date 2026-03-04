@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 // MARK: - Connect Menu
 
@@ -7,6 +8,8 @@ extension VPhoneMenuController {
         let item = NSMenuItem()
         let menu = NSMenu(title: "Connect")
         menu.addItem(makeItem("File Browser", action: #selector(openFiles)))
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(makeItem("Install IPA...", action: #selector(installIPAViaGuest)))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(makeItem("Developer Mode Status", action: #selector(devModeStatus)))
         menu.addItem(makeItem("Enable Developer Mode [WIP]", action: #selector(devModeEnable)))
@@ -71,6 +74,47 @@ extension VPhoneMenuController {
                 showAlert(title: "Guest Version", message: "build: \(hash)", style: .informational)
             } catch {
                 showAlert(title: "Guest Version", message: "\(error)", style: .warning)
+            }
+        }
+    }
+
+    // MARK: - Install IPA (Guest)
+
+    @objc func installIPAViaGuest() {
+        let panel = NSOpenPanel()
+        panel.title = "Select IPA to Install"
+        panel.allowedContentTypes = [.init(filenameExtension: "ipa")!]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        // Find the menu item and disable it during install
+        let menuItem = NSApp.mainMenu?
+            .item(withTitle: "Connect")?
+            .submenu?
+            .item(withTitle: "Install IPA...")
+
+        menuItem?.isEnabled = false
+
+        Task {
+            defer { menuItem?.isEnabled = true }
+
+            let result = try await control.installApp(localPath: url.path)
+            if let errorMessage = result.errorMessage {
+                let stageInfo = result.failedStage.map { " (stage: \($0))" } ?? ""
+                showAlert(
+                    title: "Install IPA",
+                    message: "Failed\(stageInfo): \(errorMessage)",
+                    style: .warning
+                )
+            } else {
+                let bundleInfo = result.bundleId ?? "unknown"
+                showAlert(
+                    title: "Install IPA",
+                    message: "Installed successfully.\nBundle ID: \(bundleInfo)",
+                    style: .informational
+                )
             }
         }
     }

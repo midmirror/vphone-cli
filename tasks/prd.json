@@ -1,0 +1,119 @@
+{
+  "project": "vphone-cli",
+  "branchName": "ralph/ipa-install",
+  "description": "扩展 vphoned 添加原生 IPA 安装命令 — 通过 LSApplicationWorkspace 私有 API 实现 CLI 和 GUI 两种方式安装 IPA 到虚拟 iPhone",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Guest 端 IPA 解压模块",
+      "description": "作为 vphoned 开发者，我需要在 guest VM 中将上传的 .ipa 文件解压到临时目录，以便后续安装流程使用解压后的 .app 包。",
+      "acceptanceCriteria": [
+        "新增 vphoned_app.h / vphoned_app.m 文件，遵循现有模块命名约定（vp_handle_app_*）",
+        "实现 IPA 解压函数，优先使用 posix_spawn 调用 /usr/bin/unzip，若 unzip 不可用则回退到 NSData + minizip/libarchive 解压",
+        "解压到 /tmp/<UUID>/ 临时目录，成功后返回 Payload/*.app 的完整路径",
+        "解压失败时返回包含具体原因的错误字典（如 'unzip not found'、'invalid IPA format'、'Payload/*.app not found'）",
+        "编译通过（vphoned.m 中 #import \"vphoned_app.h\" 无错误）"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Guest 端可选 ldid 重签模块",
+      "description": "作为安全研究员，我希望在 Base patch 模式下安装 IPA 时，vphoned 能自动检测 guest 中是否存在 ldid 并对 .app 包中的 Mach-O 二进制进行重签。",
+      "acceptanceCriteria": [
+        "在 vphoned_app.m 中实现重签函数，使用 posix_spawn 调用 ldid -S <binary_path>",
+        "安装流程中，先通过 access(\"/usr/bin/ldid\", X_OK) 检测 ldid 是否可用",
+        "如果 ldid 可用，对 .app 包内所有 Mach-O 二进制（主二进制 + Frameworks/*.framework/*）执行重签",
+        "如果 ldid 不可用，跳过重签并在响应中附带 \"resigned\": false 字段",
+        "重签成功时响应附带 \"resigned\": true",
+        "编译通过"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Guest 端 LSApplicationWorkspace 安装调用",
+      "description": "作为 vphoned 开发者，我需要通过 iOS 私有 API LSApplicationWorkspace 将解压后的 .app 包安装到系统中，完成应用注册和图标刷新。",
+      "acceptanceCriteria": [
+        "使用 dlopen 加载 CoreServices 框架（先尝试 /System/Library/PrivateFrameworks/CoreServices.framework/CoreServices，回退到 /System/Library/Frameworks/MobileCoreServices.framework/MobileCoreServices）",
+        "通过 NSClassFromString(@\"LSApplicationWorkspace\") 获取类，调用 defaultWorkspace 获取实例",
+        "使用 installApplication:withOptions:error: 方法安装 .app，options 传入 @{@\"PackageType\": @\"Developer\"}",
+        "安装成功后调用 _LSPrivateRebuildApplicationDatabasesForSystemApps:internal:user: 刷新 SpringBoard 图标缓存",
+        "安装失败时返回 iOS 系统错误的 localizedDescription",
+        "安装完成后清理临时解压目录和上传的 IPA 文件",
+        "编译通过"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Guest 端 app_install 命令分发与协议集成",
+      "description": "作为 vphoned 开发者，我需要将 IPA 安装功能注册为 app_install 命令，集成到现有的命令分发和能力协商机制中。",
+      "acceptanceCriteria": [
+        "在 vphoned.m 的 handle_command() 中添加 if ([type isEqualToString:@\"app_install\"]) 分支，调用 vp_handle_app_install(msg, reqId)",
+        "vp_handle_app_install 接收 msg[@\"path\"]（IPA 在 guest 中的路径），串联解压 → 安装两个阶段（JB 模式下无需重签）",
+        "在 caps 数组中添加 @\"app_install\" 字符串",
+        "成功响应格式：{\"t\": \"ok\", \"id\": \"<reqId>\", \"bundle_id\": \"<bundleID>\"}（移除 resigned 字段）",
+        "失败响应格式：{\"t\": \"err\", \"id\": \"<reqId>\", \"msg\": \"<详细错误>\", \"stage\": \"unzip|install\"}",
+        "编译通过"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "宿主端 VPhoneControl.installApp 方法",
+      "description": "作为宿主端开发者，我需要在 VPhoneControl.swift 中添加高层安装方法，封装文件上传和安装命令的完整流程。",
+      "acceptanceCriteria": [
+        "新增 func installApp(localPath: String) async throws -> InstallResult 方法",
+        "InstallResult 结构体包含 bundleId: String?、resigned: Bool、errorMessage: String?、failedStage: String? 字段",
+        "方法内部流程：读取本地 IPA → uploadFile 上传到 /tmp/install_<UUID>.ipa → sendRequest app_install → 解析响应为 InstallResult",
+        "上传或安装失败时抛出包含详细信息的错误",
+        "类型检查通过（make build 无编译错误）"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "GUI 菜单 Install IPA 入口",
+      "description": "作为用户，我希望在 VM 窗口的 Connect 菜单中看到 Install IPA... 选项，点击后弹出 Finder 文件选择面板，选择 .ipa 文件后自动完成上传和安装。",
+      "acceptanceCriteria": [
+        "在 VPhoneMenuConnect.swift 的 buildConnectMenu() 中，在 File Browser 之后添加 NSMenuItem.separator() 和 Install IPA... 菜单项",
+        "点击菜单项后弹出 NSOpenPanel，仅允许选择 .ipa 文件（allowedContentTypes 设为 UTType 对应 .ipa 扩展名）",
+        "选择文件后异步调用 control.installApp(localPath:) 执行安装",
+        "安装成功时弹出 NSAlert（.informational），显示 Installed successfully 和 bundle ID",
+        "安装失败时弹出 NSAlert（.warning），显示失败阶段和错误详情",
+        "安装过程中菜单项变为禁用状态（防止重复触发），完成后恢复",
+        "类型检查通过（make build 无编译错误）"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "CLI --install-ipa 参数支持",
+      "description": "作为安全研究员，我希望通过命令行参数 --install-ipa <path> 在 VM 启动后自动安装指定的 IPA 文件，无需通过 GUI 操作。",
+      "acceptanceCriteria": [
+        "在 VPhoneCLI.swift 中添加 @Option(name: .long, help: \"Install IPA file to the VM after boot\") var installIpa: String?",
+        "在 VPhoneAppDelegate.swift 的 control.onConnect 回调中，如果 cli.installIpa 非 nil 且 caps 包含 app_install，自动触发安装流程",
+        "安装结果通过 print() 输出到终端（成功：Installed <bundle_id> successfully，失败：Install failed at <stage>: <error>）",
+        "安装完成后 VM 继续正常运行（不退出）",
+        "如果指定的 IPA 文件不存在，启动时立即报错并退出",
+        "类型检查通过（make build 无编译错误）"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": ""
+    }
+  ]
+}

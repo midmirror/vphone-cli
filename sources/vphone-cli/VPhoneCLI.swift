@@ -35,7 +35,7 @@ struct VPhoneCLI: ParsableCommand {
     var cpu: Int = 8
 
     @Option(help: "Memory size in MB")
-    var memory: Int = 8192
+    var memory: Int = 4096
 
     @Option(help: "Path to SEP storage file (created if missing)")
     var sepStorage: String
@@ -63,6 +63,9 @@ struct VPhoneCLI: ParsableCommand {
 
     @Option(help: "Path to signed vphoned binary for guest auto-update")
     var vphonedBin: String = ".vphoned.signed"
+
+    @Option(name: .long, help: "Install IPA file to the VM after boot")
+    var installIpa: String?
 
     /// Execution is driven by VPhoneAppDelegate; main.swift calls parseOrExit()
     /// and hands the parsed options to the delegate.

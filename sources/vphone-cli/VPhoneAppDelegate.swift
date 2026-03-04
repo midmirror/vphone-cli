@@ -46,6 +46,15 @@ class VPhoneAppDelegate: NSObject, NSApplicationDelegate {
             throw VPhoneError.romNotFound(cli.rom)
         }
 
+        // Validate --install-ipa path early
+        if let ipaPath = cli.installIpa {
+            guard FileManager.default.fileExists(atPath: ipaPath) else {
+                print("[vphone] Error: IPA file not found: \(ipaPath)")
+                NSApp.terminate(nil)
+                return
+            }
+        }
+
         let diskURL = URL(fileURLWithPath: cli.disk)
         let nvramURL = URL(fileURLWithPath: cli.nvram)
         let machineIDURL = URL(fileURLWithPath: cli.machineId)
@@ -135,7 +144,8 @@ class VPhoneAppDelegate: NSObject, NSApplicationDelegate {
             menuController = mc
 
             // Wire location toggle through onConnect/onDisconnect
-            control.onConnect = { [weak mc, weak provider = locationProvider] caps in
+            let installIpaPath = cli.installIpa
+            control.onConnect = { [weak mc, weak provider = locationProvider, weak control] caps in
                 if caps.contains("location") {
                     mc?.updateLocationCapability(available: true)
                     // Auto-resume if user had toggle on
@@ -145,6 +155,24 @@ class VPhoneAppDelegate: NSObject, NSApplicationDelegate {
                 } else {
                     print("[location] guest does not support location simulation")
                 }
+                // Auto-install IPA if --install-ipa was specified
+                if let ipaPath = installIpaPath, caps.contains("app_install"), let control {
+                    Task { @MainActor in
+                        print("[vphone] auto-installing IPA: \(ipaPath)")
+                        do {
+                            let result = try await control.installApp(localPath: ipaPath)
+                            if let errorMessage = result.errorMessage {
+                                let stage = result.failedStage ?? "unknown"
+                                print("[vphone] Install failed at \(stage): \(errorMessage)")
+                            } else {
+                                let bundleId = result.bundleId ?? "unknown"
+                                print("[vphone] Installed \(bundleId) successfully")
+                            }
+                        } catch {
+                            print("[vphone] Install failed: \(error)")
+                        }
+                    }
+                }
             }
             control.onDisconnect = { [weak mc, weak provider = locationProvider] in
                 provider?.stopForwarding()
@@ -152,11 +180,30 @@ class VPhoneAppDelegate: NSObject, NSApplicationDelegate {
             }
         } else if !cli.dfu {
             // Headless mode: auto-start location as before (no menu exists)
-            control.onConnect = { [weak provider = locationProvider] caps in
+            let installIpaPath = cli.installIpa
+            control.onConnect = { [weak provider = locationProvider, weak control] caps in
                 if caps.contains("location") {
                     provider?.startForwarding()
                 } else {
                     print("[location] guest does not support location simulation")
+                }
+                // Auto-install IPA if --install-ipa was specified
+                if let ipaPath = installIpaPath, caps.contains("app_install"), let control {
+                    Task { @MainActor in
+                        print("[vphone] auto-installing IPA: \(ipaPath)")
+                        do {
+                            let result = try await control.installApp(localPath: ipaPath)
+                            if let errorMessage = result.errorMessage {
+                                let stage = result.failedStage ?? "unknown"
+                                print("[vphone] Install failed at \(stage): \(errorMessage)")
+                            } else {
+                                let bundleId = result.bundleId ?? "unknown"
+                                print("[vphone] Installed \(bundleId) successfully")
+                            }
+                        } catch {
+                            print("[vphone] Install failed: \(error)")
+                        }
+                    }
                 }
             }
             control.onDisconnect = { [weak provider = locationProvider] in

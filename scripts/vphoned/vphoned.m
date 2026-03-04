@@ -25,6 +25,7 @@
 #import "vphoned_devmode.h"
 #import "vphoned_location.h"
 #import "vphoned_files.h"
+#import "vphoned_app.h"
 
 #ifndef AF_VSOCK
 #define AF_VSOCK 40
@@ -196,6 +197,10 @@ static NSDictionary *handle_command(NSDictionary *msg) {
         return vp_make_response(@"ok", reqId);
     }
 
+    if ([type isEqualToString:@"app_install"]) {
+        return vp_handle_app_install(msg, reqId);
+    }
+
     if ([type isEqualToString:@"version"]) {
         NSMutableDictionary *r = vp_make_response(@"version", reqId);
         r[@"hash"] = @VPHONED_BUILD_HASH;
@@ -249,7 +254,7 @@ static BOOL handle_client(int fd) {
         }
 
         // Build capabilities list
-        NSMutableArray *caps = [NSMutableArray arrayWithObjects:@"hid", @"devmode", @"file", nil];
+        NSMutableArray *caps = [NSMutableArray arrayWithObjects:@"hid", @"devmode", @"file", @"app_install", nil];
         if (vp_location_available()) [caps addObject:@"location"];
 
         NSMutableDictionary *helloResp = [@{
