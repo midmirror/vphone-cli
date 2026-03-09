@@ -1,0 +1,18 @@
+## 2026-03-09 - US-001/002/003/004 (make install_ipa)
+- 实现了 VPhoneLocalControlServer：Unix domain socket 服务器，监听 {vm_dir}/.vphone.sock
+- 添加了 --vm-dir CLI 参数（默认 "."，兼容现有 cd $(VM_DIR) && vphone-cli 启动模式）
+- 在 VPhoneAppDelegate 中 VM 启动（非 DFU）后 start server，applicationWillTerminate 中 stop
+- scripts/install_ipa.py：仅用标准库，协议与 VPhoneControl 一致
+- Makefile：install_ipa 目标 + boot 目标加了 --vm-dir .
+- **未来迭代经验：**
+  - sockaddr_un.sun_path 设置时，`MemoryLayout.size(ofValue: addr.sun_path)` 要在 withUnsafeMutablePointer 外提前计算，否则 Swift 报 overlapping access 错误
+  - make build 会自动生成 VPhoneBuildInfo.swift；直接 swift build 会找不到该符号
+  - @MainActor 类的 nonisolated static func 可被 DispatchQueue.global().async 调用；Task { @MainActor in } 内访问 @MainActor 属性是安全的
+---
+
+## 代码库模式
+- vphone-cli 使用 @MainActor 标注所有 VM/UI 类，nonisolated 委托方法通过 MainActor.run {} 跳回主 Actor
+- 新增 Swift 文件需在 Package.swift 的 targets 中的 sources 目录内，SwiftPM 会自动发现
+- 现有 Makefile 通过 cd $(VM_DIR) && vphone-cli ... 启动，vphone-cli 运行时 CWD 即为 VM 目录
+- 使用 make build 而非 swift build（需要 codesign 签名才能运行）
+- VPhoneControl 使用 length-prefixed JSON（uint32 大端 + UTF-8 JSON）作为 vsock 协议

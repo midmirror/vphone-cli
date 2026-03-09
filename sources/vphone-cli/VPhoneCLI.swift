@@ -67,6 +67,9 @@ struct VPhoneCLI: ParsableCommand {
     @Option(help: "Path to signed vphoned binary for guest auto-update")
     var vphonedBin: String = ".vphoned.signed"
 
+    @Option(help: "VM directory — local control socket (.vphone.sock) is placed here")
+    var vmDir: String = "."
+
     /// Execution is driven by VPhoneAppDelegate; main.swift calls parseOrExit()
     /// and hands the parsed options to the delegate.
     mutating func run() throws {}

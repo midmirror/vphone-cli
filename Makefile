@@ -82,6 +82,9 @@ help:
 	@echo "  make cfw_install_dev         Install CFW mods via SSH (dev mode)"
 	@echo "  make cfw_install_jb          Install CFW + JB extensions (jetsam/procursus/basebin)"
 	@echo ""
+	@echo "App install:"
+	@echo "  make install_ipa IPA=<path>     Install IPA/TIPA into a running VM"
+	@echo ""
 	@echo "Variables: VM_DIR=$(VM_DIR) CPU=$(CPU) MEMORY=$(MEMORY) DISK_SIZE=$(DISK_SIZE)"
 
 # ═══════════════════════════════════════════════════════════════════
@@ -177,7 +180,8 @@ boot: bundle vphoned
 		--machine-id ./machineIdentifier.bin \
 		--cpu $(CPU) --memory $(MEMORY) \
 		--sep-rom ./AVPSEPBooter.vresearch1.bin \
-		--sep-storage ./SEPStorage
+		--sep-storage ./SEPStorage \
+		--vm-dir .
 
 boot_dfu: build
 	cd $(VM_DIR) && "$(CURDIR)/$(BINARY)" \
@@ -253,3 +257,13 @@ cfw_install_dev:
 
 cfw_install_jb:
 	cd $(VM_DIR) && $(if $(SSH_PORT),SSH_PORT="$(SSH_PORT)") zsh "$(CURDIR)/$(SCRIPTS)/cfw_install_jb.sh" .
+
+# ═══════════════════════════════════════════════════════════════════
+# App install
+# ═══════════════════════════════════════════════════════════════════
+
+.PHONY: install_ipa
+
+install_ipa:
+	@test -n "$(IPA)" || (echo "Usage: make install_ipa IPA=<path-to-app.ipa>" && exit 1)
+	$(PYTHON) "$(CURDIR)/$(SCRIPTS)/install_ipa.py" "$(VM_DIR)/.vphone.sock" "$(IPA)"

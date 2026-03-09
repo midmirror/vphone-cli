@@ -10,6 +10,7 @@ class VPhoneAppDelegate: NSObject, NSApplicationDelegate {
     private var menuController: VPhoneMenuController?
     private var fileWindowController: VPhoneFileWindowController?
     private var locationProvider: VPhoneLocationProvider?
+    private var localControlServer: VPhoneLocalControlServer?
     private var sigintSource: DispatchSourceSignal?
 
     init(cli: VPhoneCLI) {
@@ -107,6 +108,10 @@ class VPhoneAppDelegate: NSObject, NSApplicationDelegate {
             if let device = vm.virtualMachine.socketDevices.first as? VZVirtioSocketDevice {
                 control.connect(device: device)
             }
+
+            let server = VPhoneLocalControlServer(vmDir: cli.vmDir, control: control)
+            server.start()
+            localControlServer = server
         }
 
         if !cli.noGraphics {
@@ -174,5 +179,9 @@ class VPhoneAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
         !cli.noGraphics
+    }
+
+    func applicationWillTerminate(_: Notification) {
+        localControlServer?.stop()
     }
 }
