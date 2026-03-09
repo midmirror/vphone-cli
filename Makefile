@@ -266,4 +266,4 @@ cfw_install_jb:
 
 install_ipa:
 	@test -n "$(IPA)" || (echo "Usage: make install_ipa IPA=<path-to-app.ipa>" && exit 1)
-	$(PYTHON) "$(CURDIR)/$(SCRIPTS)/install_ipa.py" "$(VM_DIR)/.vphone.sock" "$(IPA)"
+	$(PYTHON) "$(CURDIR)/$(SCRIPTS)/install_ipa.py" "$(CURDIR)/$(VM_DIR)/.vphone.sock" "$(abspath $(IPA))"
